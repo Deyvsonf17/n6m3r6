@@ -4,7 +4,7 @@ modules = ["nodejs-20", "python-3.11"]
 channel = "stable-24_05"
 
 [workflows]
-runButton = "Project"
+runButton = "Telegram Bot Webhook"
 
 [[workflows.workflow]]
 name = "Project"
@@ -40,6 +40,15 @@ args = "python main.py"
 [[workflows.workflow]]
 name = "Bot SMS"
 author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python main.py"
+
+[[workflows.workflow]]
+name = "Telegram Bot Webhook"
+author = 45433681
+mode = "sequential"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
