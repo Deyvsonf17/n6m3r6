@@ -4,7 +4,7 @@ modules = ["nodejs-20", "python-3.11"]
 channel = "stable-24_05"
 
 [workflows]
-runButton = "Bot Telegram Polling"
+runButton = "Project"
 
 [[workflows.workflow]]
 name = "Project"
@@ -43,7 +43,7 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "python main.py"
+args = "python bot_sms.py"
 
 [[workflows.workflow]]
 name = "Telegram Bot Webhook"
