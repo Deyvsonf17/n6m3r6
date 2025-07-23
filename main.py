@@ -81,6 +81,17 @@ CRYPTOPAY_API_TOKEN = os.getenv("CRYPTOPAY_API_TOKEN")
 FIVESIM_API_TOKEN = os.getenv("FIVESIM_API_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 
+# Verificar se tokens essenciais existem
+if not BOT_TOKEN:
+    logger.error("❌ BOT_TOKEN não encontrado! Configure o token do bot no Secrets.")
+    raise ValueError("BOT_TOKEN é obrigatório!")
+
+if not CRYPTOPAY_API_TOKEN:
+    logger.warning("⚠️ CRYPTOPAY_API_TOKEN não encontrado! Pagamentos podem não funcionar.")
+
+if not FIVESIM_API_TOKEN:
+    logger.warning("⚠️ FIVESIM_API_TOKEN não encontrado! Compra de números pode não funcionar.")
+
 # URLs das APIs
 CRYPTOPAY_API_BASE = "https://pay.crypt.bot/api"
 FIVESIM_API_BASE = "https://5sim.net/v1"
