@@ -1,8 +1,8 @@
-# 404 Error Page - Replit Project
+# Bot de Vendas SMS Premium - Otimizado para Alta Demanda
 
 ## Overview
 
-This is a simple, static 404 error page built with HTML and CSS. The project creates an elegant, user-friendly "page not found" experience with a modern glassmorphism design and Portuguese language content. It's designed to be a standalone error page that can be integrated into any website or web application.
+Este é um bot de vendas SMS premium para Telegram desenvolvido em Python, especializado na venda de números de telefone para recebimento de códigos SMS de diversas plataformas. O sistema foi **completamente otimizado para suportar 500+ usuários simultâneos** com implementações críticas de rate limiting, cache, requests assíncronos e pool de conexões otimizado.
 
 ## User Preferences
 
@@ -10,63 +10,112 @@ Preferred communication style: Simple, everyday language.
 
 ## System Architecture
 
-This is a frontend-only static web application with no backend components or server-side logic. The architecture follows a minimal approach:
+### Backend Architecture
+- **Tecnologia Principal**: Python 3.11 com python-telegram-bot
+- **Arquitetura**: Bot assíncrono com alta concorrência
+- **Banco de Dados**: SQLite3 otimizado com WAL mode
+- **APIs Externas**: CryptoPay (pagamentos), 5Sim (números SMS), CoinGecko (cotações)
+- **Cache**: Sistema global com expiração automática (5 minutos)
 
-- **Static HTML Structure**: Single-page application using semantic HTML5
-- **CSS Styling**: Modern CSS with gradient backgrounds, glassmorphism effects, and responsive design
-- **No JavaScript Framework**: Pure HTML/CSS implementation with minimal inline JavaScript for browser navigation
+### Otimizações Críticas Implementadas (2025-07-19)
+- **Rate Limiting**: 30 requests/minuto por usuário, 0.5s entre comandos (otimizado)
+- **Requests Assíncronos**: aiohttp para chamadas não-bloqueantes
+- **Pool de Conexões**: SQLite otimizado para alta concorrência
+- **Cache de Preços**: Cotações crypto com cache inteligente
+- **Tratamento de Erros**: Fallbacks robustos e logs detalhados
+- **Sistema de Bônus**: Função centralizada calcular_bonus() para consistência
+- **Responsividade Melhorada**: Rate limiting mais flexível, respostas mais rápidas
+
+### CORREÇÃO CRÍTICA: Sistema de Bônus Separado (2025-07-19)
+- **Nova Coluna**: `saldo_bonus` adicionada ao banco para separar bônus do saldo base
+- **Processamento Correto**: Depósitos agora separam valor pago (saldo base) do bônus ganho
+- **Dedução Inteligente**: Sistema prioriza uso do bônus antes do saldo base nas compras
+- **Exibição Clara**: Usuários veem saldo base e bônus separadamente no painel
+- **Migração Automática**: Usuários existentes migrados automaticamente para nova estrutura
+
+### COMANDOS ADMIN CORRIGIDOS (2025-07-19)
+- **`/dar_saldo`**: Corrigido para aplicar bônus automático baseado no valor (R$100 = +R$20 bônus)
+- **`/dar_bonus`**: Novo comando para adicionar apenas bônus (sem saldo base)
+- **`/confirmar`**: Mantido funcionamento correto com bônus e indicações
+- **Números Grátis**: Todos comandos agora concedem números grátis corretos por faixa de valor
+
+### Estrutura de Arquivos
+- **main.py**: Bot principal otimizado para 500+ usuários simultâneos
+- **premium_bot.db**: Banco SQLite com configurações de alta performance
+- **daily_stats.json**: Estatísticas em tempo real
+- **referral_codes.json**: Sistema de indicações
 
 ## Key Components
 
-### Frontend Structure
-- **index.html**: Main HTML file containing the 404 error page structure
-- **styles.css**: Complete styling file with modern CSS features including:
-  - CSS Grid/Flexbox for layout
-  - CSS animations and transitions
-  - Glassmorphism visual effects
-  - Responsive design patterns
+### 1. Sistema de Design
+- **Variáveis CSS**: Definidas em `:root` para cores, sombras, bordas e transições
+- **Paleta de Cores**: 
+  - Cores primárias: #667eea (azul) e #764ba2 (roxo)
+  - Cores de texto: #333 (escuro) e #666 (claro)
+  - Background: #f8fafc (cinza claro)
+- **Tipografia**: Sistema de fontes nativo (system fonts) para melhor performance
 
-### Design Elements
-- **Error Code Display**: Large "404" number with decorative elements
-- **User-Friendly Messaging**: Clear Portuguese language error messages
-- **Navigation Options**: Multiple ways for users to recover from the error
-- **Help Section**: Additional support links and resources
+### 2. Layout e Estrutura
+- **Container Principal**: `.welcome-container` com design card centralizado
+- **Sistema de Layout**: Flexbox para centralização vertical e horizontal
+- **Responsividade**: Design adaptável com padding responsivo
+
+### 3. Estilização Visual
+- **Gradiente de Fundo**: Linear gradient diagonal usando as cores primárias
+- **Sombras**: Box-shadow suave para profundidade visual
+- **Border Radius**: 12px para cantos arredondados modernos
+- **Transições**: Animações suaves de 0.3s para interações
 
 ## Data Flow
 
-Since this is a static page, there is no complex data flow:
-
-1. User navigates to a non-existent page
-2. Server serves this 404.html page
-3. User sees error message and navigation options
-4. User can navigate back or to other sections of the site
+Como se trata de uma página estática, não há fluxo de dados dinâmico. O conteúdo é renderizado diretamente no HTML sem necessidade de processamento server-side ou client-side.
 
 ## External Dependencies
 
-The project has minimal external dependencies:
+### Dependências Mínimas
+- **Nenhuma biblioteca JavaScript**: O projeto não utiliza frameworks ou bibliotecas externas
+- **Fontes do Sistema**: Utiliza fontes nativas do sistema operacional
+- **CSS Puro**: Sem frameworks CSS externos como Bootstrap ou Tailwind
 
-- **System Fonts**: Uses system font stack (no external font loading)
-- **Icons**: Simple emoji icons (no icon libraries)
-- **No CDN Dependencies**: Self-contained CSS and HTML
+### Vantagens da Abordagem
+- **Performance**: Carregamento rápido sem dependências externas
+- **Manutenibilidade**: Código simples e direto
+- **Compatibilidade**: Funciona em qualquer navegador moderno
 
 ## Deployment Strategy
 
-This is a static website that can be deployed on any web server or hosting platform:
+### Estratégia de Deploy
+- **Hospedagem Estática**: Pode ser hospedado em qualquer servidor web ou CDN
+- **Configuração Mínima**: Apenas servir o arquivo HTML estático
+- **Opções de Deploy**:
+  - GitHub Pages
+  - Netlify
+  - Vercel
+  - Qualquer servidor web (Apache, Nginx)
 
-- **Static Hosting**: Can be deployed on platforms like Vercel, Netlify, GitHub Pages
-- **Web Server Integration**: Can be configured as a custom 404 page in web server configurations
-- **CDN Friendly**: All assets are self-contained and cacheable
+### Requisitos de Infraestrutura
+- **Servidor Web**: Qualquer servidor capaz de servir arquivos estáticos
+- **HTTPS**: Recomendado para melhor SEO e segurança
+- **Compressão**: Gzip pode ser configurado para otimização
 
-### Deployment Considerations
-- Configure web server to serve this page for 404 errors
-- Ensure proper MIME types for CSS files
-- Consider adding proper caching headers for static assets
+## Architectural Decisions
 
-## Technical Notes
+### 1. CSS Incorporado vs. Arquivo Separado
+- **Decisão**: CSS incorporado no HTML
+- **Rationale**: Para um projeto pequeno, reduz requisições HTTP
+- **Trade-off**: Sacrifica reutilização em favor da simplicidade
 
-- **Language**: Portuguese (pt-BR) localization
-- **Accessibility**: Uses semantic HTML and proper heading structure
-- **Performance**: Lightweight with no external dependencies
-- **Browser Support**: Modern CSS features with graceful fallbacks
+### 2. Sem Framework CSS
+- **Decisão**: CSS customizado puro
+- **Rationale**: Controle total sobre o design e performance otimizada
+- **Benefício**: Sem bloat de código desnecessário
 
-The project is designed to be easily customizable for different languages, branding, or integration requirements.
+### 3. Design System com Variáveis CSS
+- **Decisão**: Uso de CSS Custom Properties
+- **Rationale**: Facilita manutenção e consistência visual
+- **Vantagem**: Fácil modificação de temas e cores
+
+### 4. Tipografia de Sistema
+- **Decisão**: Fontes nativas do sistema
+- **Rationale**: Performance e consistência com o OS do usuário
+- **Benefício**: Carregamento instantâneo sem web fonts

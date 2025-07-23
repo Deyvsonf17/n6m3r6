@@ -13,16 +13,37 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "Error Page Server"
+args = "HTML Server"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Bot SMS"
 
 [[workflows.workflow]]
-name = "Error Page Server"
+name = "HTML Server"
 author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "python -m http.server 5000"
 waitForPort = 5000
+
+[[workflows.workflow]]
+name = "Telegram Bot"
+author = 45227628
+mode = "sequential"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python main.py"
+
+[[workflows.workflow]]
+name = "Bot SMS"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python main.py"
 
 [[ports]]
 localPort = 5000
