@@ -3,20 +3,18 @@ import os
 import sqlite3
 import asyncio
 import aiohttp
+from aiohttp import web
 import random
 import string
 import json
 import urllib.parse
 import threading
 import time
-import hashlib
-import hmac
 from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 from collections import defaultdict
 from functools import wraps
-from aiohttp import web
 
 # Configurações dos logs melhoradas
 logging.basicConfig(
@@ -80,24 +78,14 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 CRYPTOPAY_API_TOKEN = os.getenv("CRYPTOPAY_API_TOKEN")
 FIVESIM_API_TOKEN = os.getenv("FIVESIM_API_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
-
-# Verificar se tokens essenciais existem
-if not BOT_TOKEN:
-    logger.error("❌ BOT_TOKEN não encontrado! Configure o token do bot no Secrets.")
-    raise ValueError("BOT_TOKEN é obrigatório!")
-
-if not CRYPTOPAY_API_TOKEN:
-    logger.warning("⚠️ CRYPTOPAY_API_TOKEN não encontrado! Pagamentos podem não funcionar.")
-
-if not FIVESIM_API_TOKEN:
-    logger.warning("⚠️ FIVESIM_API_TOKEN não encontrado! Compra de números pode não funcionar.")
+RENDER_URL = os.getenv("RENDER_URL", "https://n6m3r6.onrender.com")
 
 # URLs das APIs
 CRYPTOPAY_API_BASE = "https://pay.crypt.bot/api"
 FIVESIM_API_BASE = "https://5sim.net/v1"
 
 # Configurações do sistema
-VALORES_RECARGA = [2, 10, 25, 50, 100, 200]
+VALORES_RECARGA = [10, 25, 50, 100, 200]
 
 # Criptomoedas disponíveis (apenas as suportadas pelo CryptoPay)
 MOEDAS_CRYPTO = [
@@ -121,23 +109,27 @@ MOEDAS_CRYPTO = [
     {"code": "CATI", "symbol": "🐱", "name": "Catizen"}
 ]
 
-# Preços dos serviços organizados por categoria
+# Preços dos serviços por país (baseado na tabela fornecida)
 PRECOS_SERVICOS = {
-    # REDES SOCIAIS
-    "instagram": {
-        "brasil": 1.75, "russia": 1.26, "indonesia": 1.05, "india": 1.33,
-        "eua": 1.61, "franca": 2.17, "alemanha": 2.31, "japao": 2.45,
-        "mexico": 1.54, "turquia": 1.40
-    },
     "facebook": {
         "brasil": 1.68, "russia": 1.12, "indonesia": 0.91, "india": 1.26,
         "eua": 1.54, "franca": 2.10, "alemanha": 2.24, "japao": 2.38,
         "mexico": 1.47, "turquia": 1.33
     },
+    "google": {
+        "brasil": 1.82, "russia": 1.19, "indonesia": 0.98, "india": 1.40,
+        "eua": 1.68, "franca": 2.24, "alemanha": 2.38, "japao": 2.52,
+        "mexico": 1.61, "turquia": 1.40
+    },
     "twitter": {
         "brasil": 1.54, "russia": 1.05, "indonesia": 0.84, "india": 1.19,
         "eua": 1.40, "franca": 1.96, "alemanha": 2.10, "japao": 2.24,
         "mexico": 1.33, "turquia": 1.19
+    },
+    "instagram": {
+        "brasil": 1.75, "russia": 1.26, "indonesia": 1.05, "india": 1.33,
+        "eua": 1.61, "franca": 2.17, "alemanha": 2.31, "japao": 2.45,
+        "mexico": 1.54, "turquia": 1.40
     },
     "snapchat": {
         "brasil": 1.47, "russia": 0.98, "indonesia": 0.77, "india": 1.12,
@@ -154,151 +146,36 @@ PRECOS_SERVICOS = {
         "eua": 1.26, "franca": 1.82, "alemanha": 1.96, "japao": 2.10,
         "mexico": 1.19, "turquia": 1.05
     },
-    "tiktok": {
-        "brasil": 1.82, "russia": 1.19, "indonesia": 0.98, "india": 1.40,
-        "eua": 1.68, "franca": 2.24, "alemanha": 2.38, "japao": 2.52,
-        "mexico": 1.61, "turquia": 1.40
-    },
-    "reddit": {
-        "brasil": 1.54, "russia": 1.05, "indonesia": 0.84, "india": 1.19,
-        "eua": 1.40, "franca": 1.96, "alemanha": 2.10, "japao": 2.24,
-        "mexico": 1.33, "turquia": 1.19
-    },
-    
-    # MENSAGERIA
-    "whatsapp": {
-        "brasil": 6.30, "russia": 2.52, "indonesia": 1.96, "india": 2.66,
-        "eua": 3.08, "franca": 9.10, "alemanha": 10.08, "japao": 10.92,
-        "mexico": 3.92, "turquia": 3.22
-    },
-    "telegram": {
-        "brasil": 5.32, "russia": 1.26, "indonesia": 0.91, "india": 1.68,
-        "eua": 2.10, "franca": 8.68, "alemanha": 10.22, "japao": 11.06,
-        "mexico": 2.94, "turquia": 2.52
-    },
     "viber": {
         "brasil": 1.61, "russia": 1.12, "indonesia": 0.91, "india": 1.26,
         "eua": 1.47, "franca": 2.03, "alemanha": 2.17, "japao": 2.31,
         "mexico": 1.40, "turquia": 1.26
     },
-    "discord": {
-        "brasil": 1.47, "russia": 0.98, "indonesia": 0.77, "india": 1.12,
-        "eua": 1.33, "franca": 1.89, "alemanha": 2.03, "japao": 2.17,
-        "mexico": 1.26, "turquia": 1.12
+    "paypal": {
+        "brasil": 1.96, "russia": 1.40, "indonesia": 1.19, "india": 1.54,
+        "eua": 1.82, "franca": 2.38, "alemanha": 2.52, "japao": 2.66,
+        "mexico": 1.75, "turquia": 1.61
     },
     "skype": {
         "brasil": 1.54, "russia": 1.05, "indonesia": 0.84, "india": 1.19,
         "eua": 1.40, "franca": 1.96, "alemanha": 2.10, "japao": 2.24,
         "mexico": 1.33, "turquia": 1.19
     },
-    "signal": {
-        "brasil": 1.68, "russia": 1.12, "indonesia": 0.91, "india": 1.26,
-        "eua": 1.54, "franca": 2.10, "alemanha": 2.24, "japao": 2.38,
-        "mexico": 1.47, "turquia": 1.33
-    },
-    "wechat": {
-        "brasil": 1.89, "russia": 1.33, "indonesia": 1.12, "india": 1.47,
-        "eua": 1.75, "franca": 2.31, "alemanha": 2.45, "japao": 2.59,
-        "mexico": 1.68, "turquia": 1.54
-    },
-    
-    # TECNOLOGIA
-    "google": {
-        "brasil": 1.82, "russia": 1.19, "indonesia": 0.98, "india": 1.40,
-        "eua": 1.68, "franca": 2.24, "alemanha": 2.38, "japao": 2.52,
-        "mexico": 1.61, "turquia": 1.40
+    "discord": {
+        "brasil": 1.47, "russia": 0.98, "indonesia": 0.77, "india": 1.12,
+        "eua": 1.33, "franca": 1.89, "alemanha": 2.03, "japao": 2.17,
+        "mexico": 1.26, "turquia": 1.12
     },
     "yahoo": {
         "brasil": 1.82, "russia": 1.19, "indonesia": 0.98, "india": 1.40,
         "eua": 1.68, "franca": 2.24, "alemanha": 2.38, "japao": 2.52,
         "mexico": 1.61, "turquia": 1.40
     },
-    "microsoft": {
-        "brasil": 1.96, "russia": 1.40, "indonesia": 1.19, "india": 1.54,
-        "eua": 1.82, "franca": 2.38, "alemanha": 2.52, "japao": 2.66,
-        "mexico": 1.75, "turquia": 1.61
-    },
-    "apple": {
-        "brasil": 2.24, "russia": 1.68, "indonesia": 1.47, "india": 1.82,
-        "eua": 2.10, "franca": 2.66, "alemanha": 2.80, "japao": 2.94,
-        "mexico": 2.03, "turquia": 1.89
-    },
-    "github": {
-        "brasil": 1.75, "russia": 1.26, "indonesia": 1.05, "india": 1.33,
-        "eua": 1.61, "franca": 2.17, "alemanha": 2.31, "japao": 2.45,
-        "mexico": 1.54, "turquia": 1.40
-    },
-    "dropbox": {
-        "brasil": 1.61, "russia": 1.12, "indonesia": 0.91, "india": 1.26,
-        "eua": 1.47, "franca": 2.03, "alemanha": 2.17, "japao": 2.31,
-        "mexico": 1.40, "turquia": 1.26
-    },
-    
-    # E-COMMERCE & FINANÇAS
-    "paypal": {
-        "brasil": 1.96, "russia": 1.40, "indonesia": 1.19, "india": 1.54,
-        "eua": 1.82, "franca": 2.38, "alemanha": 2.52, "japao": 2.66,
-        "mexico": 1.75, "turquia": 1.61
-    },
-    "amazon": {
-        "brasil": 2.10, "russia": 1.54, "indonesia": 1.33, "india": 1.68,
-        "eua": 1.96, "franca": 2.52, "alemanha": 2.66, "japao": 2.80,
-        "mexico": 1.89, "turquia": 1.75
-    },
-    "ebay": {
-        "brasil": 1.82, "russia": 1.19, "indonesia": 0.98, "india": 1.40,
-        "eua": 1.68, "franca": 2.24, "alemanha": 2.38, "japao": 2.52,
-        "mexico": 1.61, "turquia": 1.40
-    },
-    "mercadolivre": {
-        "brasil": 1.68, "russia": 1.12, "indonesia": 0.91, "india": 1.26,
-        "eua": 1.54, "franca": 2.10, "alemanha": 2.24, "japao": 2.38,
-        "mexico": 1.47, "turquia": 1.33
-    },
-    "binance": {
-        "brasil": 2.52, "russia": 1.96, "indonesia": 1.75, "india": 2.10,
-        "eua": 2.38, "franca": 2.94, "alemanha": 3.08, "japao": 3.22,
-        "mexico": 2.31, "turquia": 2.17
-    },
-    "coinbase": {
-        "brasil": 2.38, "russia": 1.82, "indonesia": 1.61, "india": 1.96,
-        "eua": 2.24, "franca": 2.80, "alemanha": 2.94, "japao": 3.08,
-        "mexico": 2.17, "turquia": 2.03
-    },
-    
-    # ENTRETENIMENTO
     "netflix": {
         "brasil": 2.10, "russia": 1.54, "indonesia": 1.33, "india": 1.68,
         "eua": 1.96, "franca": 2.52, "alemanha": 2.66, "japao": 2.80,
         "mexico": 1.89, "turquia": 1.75
     },
-    "spotify": {
-        "brasil": 1.89, "russia": 1.33, "indonesia": 1.12, "india": 1.47,
-        "eua": 1.75, "franca": 2.31, "alemanha": 2.45, "japao": 2.59,
-        "mexico": 1.68, "turquia": 1.54
-    },
-    "youtube": {
-        "brasil": 1.96, "russia": 1.40, "indonesia": 1.19, "india": 1.54,
-        "eua": 1.82, "franca": 2.38, "alemanha": 2.52, "japao": 2.66,
-        "mexico": 1.75, "turquia": 1.61
-    },
-    "twitch": {
-        "brasil": 1.75, "russia": 1.26, "indonesia": 1.05, "india": 1.33,
-        "eua": 1.61, "franca": 2.17, "alemanha": 2.31, "japao": 2.45,
-        "mexico": 1.54, "turquia": 1.40
-    },
-    "steam": {
-        "brasil": 2.03, "russia": 1.47, "indonesia": 1.26, "india": 1.61,
-        "eua": 1.89, "franca": 2.45, "alemanha": 2.59, "japao": 2.73,
-        "mexico": 1.82, "turquia": 1.68
-    },
-    "xbox": {
-        "brasil": 1.89, "russia": 1.33, "indonesia": 1.12, "india": 1.47,
-        "eua": 1.75, "franca": 2.31, "alemanha": 2.45, "japao": 2.59,
-        "mexico": 1.68, "turquia": 1.54
-    },
-    
-    # RELACIONAMENTOS
     "tinder": {
         "brasil": 1.68, "russia": 1.19, "indonesia": 0.98, "india": 1.33,
         "eua": 1.54, "franca": 2.10, "alemanha": 2.24, "japao": 2.38,
@@ -309,37 +186,31 @@ PRECOS_SERVICOS = {
         "eua": 1.40, "franca": 1.96, "alemanha": 2.10, "japao": 2.24,
         "mexico": 1.33, "turquia": 1.19
     },
+    "spotify": {
+        "brasil": 1.89, "russia": 1.33, "indonesia": 1.12, "india": 1.47,
+        "eua": 1.75, "franca": 2.31, "alemanha": 2.45, "japao": 2.59,
+        "mexico": 1.68, "turquia": 1.54
+    },
     "bumble": {
         "brasil": 1.47, "russia": 0.98, "indonesia": 0.77, "india": 1.12,
         "eua": 1.33, "franca": 1.89, "alemanha": 2.03, "japao": 2.17,
         "mexico": 1.26, "turquia": 1.12
     },
-    "pof": {
-        "brasil": 1.54, "russia": 1.05, "indonesia": 0.84, "india": 1.19,
-        "eua": 1.40, "franca": 1.96, "alemanha": 2.10, "japao": 2.24,
-        "mexico": 1.33, "turquia": 1.19
-    },
-    "okcupid": {
+    "dropbox": {
         "brasil": 1.61, "russia": 1.12, "indonesia": 0.91, "india": 1.26,
         "eua": 1.47, "franca": 2.03, "alemanha": 2.17, "japao": 2.31,
         "mexico": 1.40, "turquia": 1.26
     },
-    "match": {
-        "brasil": 1.75, "russia": 1.26, "indonesia": 1.05, "india": 1.33,
-        "eua": 1.61, "franca": 2.17, "alemanha": 2.31, "japao": 2.45,
-        "mexico": 1.54, "turquia": 1.40
+    "telegram": {
+        "brasil": 5.32, "russia": 1.26, "indonesia": 0.91, "india": 1.68,
+        "eua": 2.10, "franca": 8.68, "alemanha": 10.22, "japao": 11.06,
+        "mexico": 2.94, "turquia": 2.52
+    },
+    "whatsapp": {
+        "brasil": 6.30, "russia": 2.52, "indonesia": 1.96, "india": 2.66,
+        "eua": 3.08, "franca": 9.10, "alemanha": 10.08, "japao": 10.92,
+        "mexico": 3.92, "turquia": 3.22
     }
-}
-
-# Categorias de serviços para organização em abas
-CATEGORIAS_SERVICOS = {
-    "🔥 POPULARES": ["whatsapp", "telegram", "instagram", "facebook", "google", "netflix"],
-    "📱 REDES SOCIAIS": ["instagram", "facebook", "twitter", "snapchat", "linkedin", "pinterest", "tiktok", "reddit"],
-    "💬 MENSAGERIA": ["whatsapp", "telegram", "viber", "discord", "skype", "signal", "wechat"],
-    "💻 TECNOLOGIA": ["google", "yahoo", "microsoft", "apple", "github", "dropbox"],
-    "💰 E-COMMERCE": ["paypal", "amazon", "ebay", "mercadolivre", "binance", "coinbase"],
-    "🎮 ENTRETENIMENTO": ["netflix", "spotify", "youtube", "twitch", "steam", "xbox"],
-    "💕 RELACIONAMENTOS": ["tinder", "badoo", "bumble", "pof", "okcupid", "match"]
 }
 
 # Mapeamento para IDs do CoinGecko (apenas moedas suportadas pelo CryptoPay)
@@ -728,8 +599,6 @@ def calcular_bonus(valor):
         return 20
     elif valor >= 50:
         return 8
-    elif valor >= 2:
-        return 0  # Valores pequenos para teste não recebem bônus
     else:
         return 0
 
@@ -874,35 +743,6 @@ class CryptoPayManager:
             logger.error(f"Erro ao converter BRL para {cripto}: {e}")
             return None
 
-    async def convert_crypto_to_brl(self, valor_crypto, moeda):
-        """Converte valor em crypto para BRL"""
-        try:
-            cripto_id = COINGECKO_IDS.get(moeda.upper())
-            if not cripto_id:
-                logger.error(f"ID CoinGecko não encontrado para {moeda}")
-                return None
-
-            url = f"https://api.coingecko.com/api/v3/simple/price?ids={cripto_id}&vs_currencies=brl"
-            
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
-                async with session.get(url) as response:
-                    if response.status != 200:
-                        logger.error(f"Erro na API CoinGecko: {response.status}")
-                        return None
-
-                    data = await response.json()
-                    if cripto_id not in data:
-                        logger.error(f"Dados não encontrados para {cripto_id}")
-                        return None
-
-                    cotacao = data[cripto_id]["brl"]
-                    valor_brl = valor_crypto * cotacao
-                    
-                    return round(valor_brl, 2)
-        except Exception as e:
-            logger.error(f"Erro ao converter {moeda} para BRL: {e}")
-            return None
-
     async def create_invoice_async(self, valor_brl, moeda, user_id):
         """Cria uma fatura de pagamento com requests assíncronos"""
         try:
@@ -969,167 +809,6 @@ class CryptoPayManager:
 
 # Instância do gerenciador de pagamentos
 crypto_pay = CryptoPayManager()
-
-def verify_webhook_signature(token, headers, body):
-    """Verifica a assinatura do webhook do CryptoPay"""
-    try:
-        # Obter assinatura do header
-        signature = headers.get('crypto-pay-api-signature')
-        if not signature:
-            return False
-        
-        # Criar hash esperado
-        secret = hashlib.sha256(token.encode()).hexdigest()
-        expected_signature = hmac.new(
-            secret.encode(),
-            body,
-            hashlib.sha256
-        ).hexdigest()
-        
-        return hmac.compare_digest(signature, expected_signature)
-    except Exception as e:
-        logger.error(f"Erro ao verificar assinatura webhook: {e}")
-        return False
-
-async def handle_webhook(request):
-    """Handler para webhooks do CryptoPay"""
-    try:
-        # Ler dados do webhook
-        body = await request.read()
-        headers = dict(request.headers)
-        
-        # Verificar assinatura
-        if not verify_webhook_signature(CRYPTOPAY_API_TOKEN, headers, body):
-            logger.warning("Assinatura do webhook inválida")
-            return web.Response(status=401, text="Unauthorized")
-        
-        # Parse do JSON
-        data = json.loads(body.decode())
-        logger.info(f"Webhook recebido: {data}")
-        
-        # Verificar se é update de invoice
-        if data.get('update_type') == 'invoice_paid':
-            invoice_data = data.get('payload')
-            if invoice_data and invoice_data.get('status') == 'paid':
-                await process_payment_webhook(invoice_data)
-        
-        return web.Response(text="OK")
-    
-    except Exception as e:
-        logger.error(f"Erro ao processar webhook: {e}")
-        return web.Response(status=500, text="Error")
-
-async def process_payment_webhook(invoice_data):
-    """Processa pagamento confirmado via webhook"""
-    try:
-        invoice_id = invoice_data.get('invoice_id')
-        amount = float(invoice_data.get('amount', 0))
-        asset = invoice_data.get('asset')
-        description = invoice_data.get('description', '')
-        
-        logger.info(f"Processando pagamento: {invoice_id}, {amount} {asset}")
-        
-        # Extrair user_id da descrição
-        user_id = None
-        if 'Usuário' in description:
-            try:
-                user_id = int(description.split('Usuário ')[1].split()[0])
-            except:
-                logger.error(f"Não foi possível extrair user_id da descrição: {description}")
-                return
-        
-        if not user_id:
-            logger.error(f"User ID não encontrado na descrição: {description}")
-            return
-        
-        # Converter crypto para BRL usando cotação atual
-        valor_brl = await crypto_pay.convert_crypto_to_brl(amount, asset)
-        if not valor_brl:
-            logger.error(f"Erro ao converter {amount} {asset} para BRL")
-            return
-        
-        # Verificar se já foi processado
-        conn = sqlite3.connect(db.db_path)
-        cursor = conn.cursor()
-        cursor.execute("SELECT id FROM transacoes WHERE invoice_id = ? AND status = 'confirmado'", (invoice_id,))
-        if cursor.fetchone():
-            logger.info(f"Pagamento {invoice_id} já foi processado")
-            conn.close()
-            return
-        
-        # Registrar transação
-        cursor.execute('''
-            INSERT OR REPLACE INTO transacoes (user_id, tipo, valor, moeda, status, invoice_id)
-            VALUES (?, ?, ?, ?, ?, ?)
-        ''', (user_id, 'deposito', valor_brl, asset, 'confirmado', invoice_id))
-        
-        # Calcular bônus
-        bonus = calcular_bonus(valor_brl)
-        
-        # Processar depósito
-        db.processar_deposito(user_id, valor_brl, bonus)
-        
-        # Verificar indicações para recompensas
-        if valor_brl >= 20.0:
-            user_data = db.get_user(user_id)
-            if user_data and user_data[5]:  # indicador_id existe
-                indicador_id = user_data[5]
-                
-                # Dar números grátis
-                cursor.execute('UPDATE usuarios SET numeros_gratis = numeros_gratis + 2 WHERE user_id = ?', (user_id,))
-                cursor.execute('UPDATE usuarios SET numeros_gratis = numeros_gratis + 2 WHERE user_id = ?', (indicador_id,))
-                cursor.execute('UPDATE usuarios SET indicacoes_validas = indicacoes_validas + 1 WHERE user_id = ?', (indicador_id,))
-                
-                # Notificar indicador
-                try:
-                    from telegram.ext import Application
-                    app = Application.builder().token(BOT_TOKEN).build()
-                    await app.bot.send_message(
-                        indicador_id,
-                        f"🎉 RECOMPENSA DE INDICAÇÃO!\n\n"
-                        f"💰 Sua indicação depositou R$ {valor_brl:.2f}!\n"
-                        f"🎁 Você ganhou 2 números GRÁTIS!\n"
-                        f"👤 Use /start para ver seus números grátis!"
-                    )
-                except Exception as e:
-                    logger.error(f"Erro ao notificar indicador: {e}")
-        
-        conn.commit()
-        conn.close()
-        
-        # Notificar usuário
-        try:
-            from telegram.ext import Application
-            app = Application.builder().token(BOT_TOKEN).build()
-            
-            if valor_brl >= 20.0 and user_data and user_data[5]:
-                await app.bot.send_message(
-                    user_id,
-                    f"✅ PAGAMENTO CONFIRMADO AUTOMATICAMENTE!\n\n"
-                    f"💰 Valor pago: R$ {valor_brl:.2f}\n"
-                    f"🎁 Bônus de recarga: R$ {bonus:.2f}\n"
-                    f"📊 Total creditado: R$ {valor_brl + bonus:.2f}\n"
-                    f"🎁 EXTRA: Você ganhou 2 números GRÁTIS por ter sido indicado!\n"
-                    f"🎉 Seu saldo foi atualizado automaticamente!\n"
-                    f"📱 Use /start para ver seus créditos!"
-                )
-            else:
-                await app.bot.send_message(
-                    user_id,
-                    f"✅ PAGAMENTO CONFIRMADO AUTOMATICAMENTE!\n\n"
-                    f"💰 Valor pago: R$ {valor_brl:.2f}\n"
-                    f"🎁 Bônus de recarga: R$ {bonus:.2f}\n"
-                    f"📊 Total creditado: R$ {valor_brl + bonus:.2f}\n"
-                    f"🎉 Seu saldo foi atualizado automaticamente!\n"
-                    f"📱 Use /start para ver seus créditos!"
-                )
-        except Exception as e:
-            logger.error(f"Erro ao notificar usuário: {e}")
-        
-        logger.info(f"Pagamento processado com sucesso: User {user_id}, R$ {valor_brl:.2f}")
-        
-    except Exception as e:
-        logger.error(f"Erro ao processar pagamento via webhook: {e}")
 
 class FiveSimManager:
     def __init__(self):
@@ -1506,7 +1185,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @rate_limit
 async def menu_servicos(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Menu de categorias de serviços premium"""
+    """Menu de serviços premium"""
     query = update.callback_query
     if not query or not query.from_user:
         return
@@ -1545,21 +1224,40 @@ async def menu_servicos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tempo_restante = calculate_time_left()
     urgencia_msg = get_random_urgencia()
 
-    # Mostrar categorias de serviços
+    # Mostrar serviços com preços
     keyboard = []
-    for categoria, servicos in CATEGORIAS_SERVICOS.items():
-        # Calcular preço mínimo da categoria
-        precos_categoria = []
-        for servico in servicos:
-            if servico in PRECOS_SERVICOS:
-                precos_categoria.extend(PRECOS_SERVICOS[servico].values())
-        
-        preco_min_categoria = min(precos_categoria) if precos_categoria else 0
-        
+    for servico in PRECOS_SERVICOS.keys():
+        emoji_map = {
+            "whatsapp": "📱",
+            "telegram": "📨",
+            "instagram": "📸",
+            "facebook": "👥",
+            "twitter": "🐦",
+            "google": "🔍",
+            "linkedin": "💼",
+            "pinterest": "📌",
+            "viber": "📞",
+            "paypal": "💳",
+            "skype": "🎥",
+            "discord": "🎮",
+            "yahoo": "📧",
+            "netflix": "📺",
+            "tinder": "💕",
+            "badoo": "💝",
+            "spotify": "🎵",
+            "bumble": "🐝",
+            "dropbox": "📦",
+            "snapchat": "👻"
+        }
+
+        emoji = emoji_map.get(servico, "📱")
+        # Pegar o preço mais barato do serviço
+        preco_min = min(PRECOS_SERVICOS[servico].values())
+
         keyboard.append([
             InlineKeyboardButton(
-                f"{categoria} - A partir de R$ {preco_min_categoria:.2f}",
-                callback_data=f"categoria_{categoria.split()[1].lower()}"
+                f"{emoji} {servico.upper()} - A partir de R$ {preco_min:.2f}",
+                callback_data=f"servico_{servico}"
             )
         ])
 
@@ -1575,87 +1273,8 @@ async def menu_servicos(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
         f"💥 MELHORES PREÇOS DO MERCADO!\n"
         f"{urgencia_msg}\n\n"
-        f"📂 ESCOLHA UMA CATEGORIA:\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"✨ Agora com +{len(PRECOS_SERVICOS)} serviços disponíveis!",
-        reply_markup=reply_markup
-    )
-
-async def menu_categoria(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Menu de serviços por categoria"""
-    query = update.callback_query
-    if not query or not query.data or not query.from_user:
-        return
-
-    await query.answer()
-
-    categoria_code = query.data.split("_")[1]
-    
-    # Mapear códigos para categorias
-    categoria_map = {
-        "populares": "🔥 POPULARES",
-        "redes": "📱 REDES SOCIAIS", 
-        "mensageria": "💬 MENSAGERIA",
-        "tecnologia": "💻 TECNOLOGIA",
-        "e-commerce": "💰 E-COMMERCE",
-        "entretenimento": "🎮 ENTRETENIMENTO",
-        "relacionamentos": "💕 RELACIONAMENTOS"
-    }
-    
-    categoria_nome = categoria_map.get(categoria_code, "🔥 POPULARES")
-    
-    if categoria_nome not in CATEGORIAS_SERVICOS:
-        await query.edit_message_text("❌ Categoria não encontrada!")
-        return
-
-    servicos_categoria = CATEGORIAS_SERVICOS[categoria_nome]
-    
-    # Obter estatísticas
-    stats = get_stats_fake()
-    tempo_restante = calculate_time_left()
-
-    # Emoji map expandido
-    emoji_map = {
-        "whatsapp": "📱", "telegram": "📨", "instagram": "📸", "facebook": "👥",
-        "twitter": "🐦", "google": "🔍", "linkedin": "💼", "pinterest": "📌",
-        "viber": "📞", "paypal": "💳", "skype": "🎥", "discord": "🎮",
-        "yahoo": "📧", "netflix": "📺", "tinder": "💕", "badoo": "💝",
-        "spotify": "🎵", "bumble": "🐝", "dropbox": "📦", "snapchat": "👻",
-        "tiktok": "🎬", "reddit": "🤖", "signal": "🔒", "wechat": "💬",
-        "microsoft": "🖥️", "apple": "🍎", "github": "⚙️", "amazon": "📦",
-        "ebay": "🛒", "mercadolivre": "🛍️", "binance": "₿", "coinbase": "💎",
-        "youtube": "📹", "twitch": "🎮", "steam": "🎯", "xbox": "🎮",
-        "pof": "💌", "okcupid": "💘", "match": "❤️"
-    }
-
-    # Mostrar serviços da categoria
-    keyboard = []
-    for servico in servicos_categoria:
-        if servico in PRECOS_SERVICOS:
-            emoji = emoji_map.get(servico, "📱")
-            preco_min = min(PRECOS_SERVICOS[servico].values())
-            
-            keyboard.append([
-                InlineKeyboardButton(
-                    f"{emoji} {servico.upper()} - A partir de R$ {preco_min:.2f}",
-                    callback_data=f"servico_{servico}"
-                )
-            ])
-
-    keyboard.append([
-        InlineKeyboardButton("🔙 Categorias", callback_data="menu_servicos"),
-        InlineKeyboardButton("🏠 Menu", callback_data="menu_principal")
-    ])
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    await query.edit_message_text(
-        f"🎯 {categoria_nome.upper()}\n\n"
-        f"💰 Seu saldo: R$ {db.get_saldo(query.from_user.id):.2f}\n"
-        f"⏰ Resta: {tempo_restante}\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"🚨 ALTA DEMANDA HOJE!\n"
-        f"👥 {stats['pessoas_vendo_servico']} pessoas visualizando agora\n\n"
-        f"📱 Escolha o serviço:",
+        f"🏆 ESCOLHA SEU SERVIÇO:\n"
+        f"━━━━━━━━━━━━━━━━━━━━",
         reply_markup=reply_markup
     )
 
@@ -1754,19 +1373,26 @@ async def selecionar_pais(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Mapear serviços para códigos da 5sim
     service_codes = {
-        "whatsapp": "whatsapp", "telegram": "telegram", "instagram": "instagram",
-        "facebook": "facebook", "twitter": "twitter", "google": "google",
-        "linkedin": "linkedin", "pinterest": "pinterest", "viber": "viber",
-        "paypal": "paypal", "skype": "skype", "discord": "discord",
-        "yahoo": "yahoo", "netflix": "netflix", "tinder": "tinder",
-        "badoo": "badoo", "spotify": "spotify", "bumble": "bumble",
-        "dropbox": "dropbox", "snapchat": "snapchat", "tiktok": "tiktok",
-        "reddit": "reddit", "signal": "signal", "wechat": "wechat",
-        "microsoft": "microsoft", "apple": "apple", "github": "github",
-        "amazon": "amazon", "ebay": "ebay", "mercadolivre": "mercadolibre",
-        "binance": "binance", "coinbase": "coinbase", "youtube": "google",
-        "twitch": "twitch", "steam": "steam", "xbox": "microsoft",
-        "pof": "pof", "okcupid": "okcupid", "match": "match"
+        "whatsapp": "whatsapp",
+        "telegram": "telegram", 
+        "instagram": "instagram",
+        "facebook": "facebook",
+        "twitter": "twitter",
+        "google": "google",
+        "linkedin": "linkedin",
+        "pinterest": "pinterest",
+        "viber": "viber",
+        "paypal": "paypal",
+        "skype": "skype",
+        "discord": "discord",
+        "yahoo": "yahoo",
+        "netflix": "netflix",
+        "tinder": "tinder",
+        "badoo": "badoo",
+        "spotify": "spotify",
+        "bumble": "bumble",
+        "dropbox": "dropbox",
+        "snapchat": "snapchat"
     }
 
     service_code = service_codes.get(servico, servico)
@@ -1875,14 +1501,7 @@ async def menu_recarga(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             bonus_text = ""
 
-        if valor == 2:
-            keyboard.append([
-                InlineKeyboardButton(
-                    f"🧪 R$ {valor} - TESTE",
-                    callback_data=f"recarga_{valor}"
-                )
-            ])
-        elif valor >= 50:
+        if valor >= 50:
             keyboard.append([
                 InlineKeyboardButton(
                     f"🔥 R$ {valor}{bonus_text} - POPULAR!",
@@ -2168,7 +1787,7 @@ async def menu_ajuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
     preco_min = get_min_price_for_service()
 
     await query.edit_message_text(
-        
+        f"💎 SUPORTE VIP 24/7\n\n"
         f"📱 Como usar:\n"
         f"1. Recarregue saldo (bônus incluído)\n"
         f"2. Escolha o serviço desejado\n"
@@ -2187,7 +1806,8 @@ async def menu_ajuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"• Recarga R$ 50+ = 15% extra + 5 números grátis\n"
         f"• Recarga R$ 100+ = 20% extra + 10 números grátis\n"
         f"• Recarga R$ 200+ = 25% extra + 20 números grátis\n\n"
-        f"🔥 MELHORES PREÇOS DO MERCADO!\n",
+        f"🔥 MELHORES PREÇOS DO MERCADO!\n"
+        f"📞 Suporte: Entre em contato com o administrador",
         reply_markup=reply_markup
     )
 
@@ -2246,8 +1866,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await menu_ajuda(update, context)
     elif data == "menu_principal":
         await start(update, context)
-    elif data.startswith("categoria_"):
-        await menu_categoria(update, context)
     elif data.startswith("servico_"):
         await selecionar_servico(update, context)
     elif data.startswith("pais_"):
@@ -3242,79 +2860,169 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
         except Exception as e:
             logger.error(f"Erro ao responder erro para usuário: {e}")
 
+# ========================= SERVIDOR WEB =========================
 
-
-async def handle_telegram_webhook(request):
-    """Handler para webhooks do Telegram"""
+async def webhook_handler(request):
+    """Handler para webhooks do CryptoPay"""
     try:
-        # Ler dados do webhook
-        body = await request.read()
-        data = json.loads(body.decode())
+        data = await request.json()
+        logger.info(f"🎯 Webhook recebido: {data}")
         
-        # Criar update do Telegram
-        update = Update.de_json(data, application.bot)
+        # Verificar se é uma atualização de pagamento
+        if data.get('update_type') == 'invoice_paid':
+            invoice_data = data.get('payload', {})
+            invoice_id = invoice_data.get('invoice_id')
+            amount = float(invoice_data.get('amount', 0))
+            currency = invoice_data.get('asset')
+            
+            if invoice_id and amount > 0:
+                # Processar pagamento automaticamente
+                await processar_pagamento_webhook(invoice_id, amount, currency)
+                logger.info(f"✅ Pagamento processado via webhook: {invoice_id}")
         
-        # Processar update
-        await application.process_update(update)
-        
-        return web.Response(text="OK")
+        return web.Response(text="OK", status=200)
     
     except Exception as e:
-        logger.error(f"Erro ao processar webhook do Telegram: {e}")
-        return web.Response(status=500, text="Error")
+        logger.error(f"❌ Erro no webhook: {e}")
+        return web.Response(text="ERROR", status=500)
 
-async def setup_webhook():
-    """Configura o webhook do Telegram"""
+async def uptime_handler(request):
+    """Handler para UptimeRobot manter o bot ativo"""
     try:
-        # Remover webhook existente primeiro
-        await application.bot.delete_webhook(drop_pending_updates=True)
-        logger.info("🗑️ Webhook anterior removido")
+        # Informações básicas do sistema
+        uptime_info = {
+            "status": "online",
+            "service": "Bot SMS Premium",
+            "timestamp": datetime.now().isoformat(),
+            "render_url": RENDER_URL
+        }
         
-        # Para desenvolvimento no Replit, vamos usar polling ao invés de webhook
-        logger.info("🔄 Usando polling para desenvolvimento no Replit")
-        
+        logger.info("🟢 UptimeRobot ping recebido - sistema ativo")
+        return web.json_response(uptime_info)
+    
     except Exception as e:
-        logger.error(f"Erro ao configurar webhook: {e}")
+        logger.error(f"❌ Erro no uptime: {e}")
+        return web.Response(text="ERROR", status=500)
 
-async def start_cryptopay_server():
-    """Inicia servidor apenas para webhook do CryptoPay"""
+async def status_handler(request):
+    """Handler para verificar status do sistema"""
+    try:
+        # Verificar database
+        conn = sqlite3.connect(db.db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM usuarios")
+        total_users = cursor.fetchone()[0]
+        conn.close()
+        
+        status_info = {
+            "status": "healthy",
+            "service": "Bot SMS Premium",
+            "users": total_users,
+            "timestamp": datetime.now().isoformat(),
+            "version": "2.0",
+            "features": ["SMS Sales", "Crypto Payments", "Auto Bonus", "Rate Limiting"]
+        }
+        
+        return web.json_response(status_info)
+    
+    except Exception as e:
+        logger.error(f"❌ Erro no status: {e}")
+        return web.json_response({"status": "error", "message": str(e)}, status=500)
+
+async def processar_pagamento_webhook(invoice_id, amount, currency):
+    """Processa pagamento recebido via webhook"""
+    try:
+        conn = sqlite3.connect(db.db_path)
+        cursor = conn.cursor()
+        
+        # Buscar transação pendente
+        cursor.execute("""
+            SELECT user_id, valor_brl FROM transacoes 
+            WHERE invoice_id = ? AND status = 'pendente'
+        """, (invoice_id,))
+        
+        transacao = cursor.fetchone()
+        if not transacao:
+            logger.warning(f"⚠️ Transação não encontrada para invoice {invoice_id}")
+            return
+        
+        user_id, valor_brl = transacao
+        
+        # Calcular bônus
+        bonus = calcular_bonus(valor_brl)
+        
+        # Atualizar saldo do usuário
+        cursor.execute("""
+            UPDATE usuarios 
+            SET saldo = saldo + ?, 
+                saldo_bonus = saldo_bonus + ?,
+                total_depositado = total_depositado + ?
+            WHERE user_id = ?
+        """, (valor_brl, bonus, valor_brl, user_id))
+        
+        # Marcar transação como paga
+        cursor.execute("""
+            UPDATE transacoes 
+            SET status = 'pago', data_confirmacao = ?
+            WHERE invoice_id = ?
+        """, (datetime.now().isoformat(), invoice_id))
+        
+        conn.commit()
+        conn.close()
+        
+        logger.info(f"✅ Pagamento processado automaticamente: User {user_id}, R${valor_brl}, Bônus: R${bonus}")
+        
+        # Enviar notificação para o usuário
+        from telegram import Bot
+        bot = Bot(token=BOT_TOKEN)
+        
+        try:
+            await bot.send_message(
+                chat_id=user_id,
+                text=f"✅ **PAGAMENTO CONFIRMADO!**\n\n"
+                     f"💰 Valor: R$ {valor_brl:.2f}\n"
+                     f"🎁 Bônus: R$ {bonus:.2f}\n"
+                     f"💳 Total creditado: R$ {valor_brl + bonus:.2f}\n\n"
+                     f"🚀 Seu saldo foi atualizado automaticamente!",
+                parse_mode='Markdown'
+            )
+        except Exception as e:
+            logger.error(f"Erro ao enviar notificação: {e}")
+    
+    except Exception as e:
+        logger.error(f"❌ Erro ao processar pagamento webhook: {e}")
+
+async def start_web_server():
+    """Inicia servidor web para webhooks e uptime"""
     try:
         app = web.Application()
         
-        # Rota para webhook do CryptoPay
-        app.router.add_post('/webhook/cryptopay', handle_webhook)
+        # Configurar rotas
+        app.router.add_post('/webhook', webhook_handler)
+        app.router.add_get('/uptime', uptime_handler)
+        app.router.add_get('/status', status_handler)
+        app.router.add_get('/', status_handler)  # Root também mostra status
         
-        # Rota de status para verificar se o servidor está funcionando
-        async def health_check(request):
-            return web.Response(text="✅ Servidor CryptoPay ativo!")
-        
-        app.router.add_get('/', health_check)
-        
+        # Iniciar servidor na porta 5000
         runner = web.AppRunner(app)
         await runner.setup()
-        
-        # Usar porta 5000 conforme recomendação do Replit
         site = web.TCPSite(runner, '0.0.0.0', 5000)
         await site.start()
         
-        logger.info("🌐 Servidor CryptoPay iniciado na porta 5000")
-        logger.info("💰 Endpoint CryptoPay: /webhook/cryptopay")
-        logger.info("🔍 Health check: /")
+        logger.info(f"🌐 Servidor web iniciado em {RENDER_URL}")
+        logger.info("📡 Endpoints disponíveis:")
+        logger.info(f"   • {RENDER_URL}/webhook - Webhooks CryptoPay")
+        logger.info(f"   • {RENDER_URL}/uptime - UptimeRobot")
+        logger.info(f"   • {RENDER_URL}/status - Status do sistema")
         
-        # Manter servidor rodando
-        while True:
-            await asyncio.sleep(3600)
-            
+        return runner
+        
     except Exception as e:
-        logger.error(f"Erro no servidor CryptoPay: {e}")
+        logger.error(f"❌ Erro ao iniciar servidor web: {e}")
+        raise
 
-# Instância global da aplicação
-application = None
-
-def main():
-    """Função principal"""
-    global application
-    
+async def main():
+    """Função principal com servidor híbrido"""
     if not BOT_TOKEN:
         logger.error("BOT_TOKEN não configurado nos secrets!")
         return
@@ -3337,34 +3045,64 @@ def main():
         # Adicionar handler de erros
         application.add_error_handler(error_handler)
 
-        # Inicializar aplicação
-        async def run_hybrid():
-            # Inicializar aplicação
-            await application.initialize()
-            await application.start()
-            
-            # Configurar webhook (remove webhook anterior)
-            await setup_webhook()
-            
-            # Iniciar servidor para webhook do CryptoPay em paralelo
-            server_task = asyncio.create_task(start_cryptopay_server())
-            
-            # Usar polling para o bot do Telegram
-            logger.info("🚀 Bot Premium iniciado com Polling + Servidor CryptoPay!")
-            await application.updater.start_polling(
-                allowed_updates=["message", "callback_query"],
-                drop_pending_updates=True
-            )
-            
-            # Manter ambos rodando
-            await asyncio.gather(server_task)
+        # Iniciar aplicação
+        await application.initialize()
+        await application.start()
 
-        # Rodar modo híbrido
-        asyncio.run(run_hybrid())
+        # Iniciar servidor web em paralelo
+        web_runner = await start_web_server()
+        
+        logger.info("🚀 Bot Premium iniciado! Sistema VIP ativo.")
+        logger.info(f"🌐 Servidor web rodando em {RENDER_URL}")
+        
+        # Configurar webhook do CryptoPay se disponível
+        if CRYPTOPAY_API_TOKEN:
+            await configurar_webhook_cryptopay()
+        
+        # Usar polling para o bot
+        await application.updater.start_polling(
+            allowed_updates=["message", "callback_query"],
+            drop_pending_updates=True
+        )
+        
+        # Manter ambos serviços rodando
+        try:
+            while True:
+                await asyncio.sleep(1)
+        except KeyboardInterrupt:
+            logger.info("🛑 Parando serviços...")
+            await application.stop()
+            await web_runner.cleanup()
 
     except Exception as e:
         logger.error(f"Erro crítico ao iniciar bot: {e}")
-        import time
-        time.sleep(5)
+        # Aguardar e tentar reiniciar
+        await asyncio.sleep(5)
         logger.info("Tentando reiniciar bot...")
-        main()
+        await main()
+
+async def configurar_webhook_cryptopay():
+    """Configura webhook do CryptoPay para pagamentos automáticos"""
+    try:
+        webhook_url = f"{RENDER_URL}/webhook"
+        
+        async with aiohttp.ClientSession() as session:
+            url = f"{CRYPTOPAY_API_BASE}/setWebhook"
+            headers = {
+                "Crypto-Pay-API-Token": CRYPTOPAY_API_TOKEN
+            }
+            data = {
+                "webhook_url": webhook_url
+            }
+            
+            async with session.post(url, headers=headers, json=data) as response:
+                if response.status == 200:
+                    logger.info(f"✅ Webhook CryptoPay configurado: {webhook_url}")
+                else:
+                    logger.warning(f"⚠️ Falha ao configurar webhook CryptoPay: {response.status}")
+                    
+    except Exception as e:
+        logger.error(f"❌ Erro ao configurar webhook CryptoPay: {e}")
+
+if __name__ == "__main__":
+    asyncio.run(main())

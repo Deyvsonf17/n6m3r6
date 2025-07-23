@@ -13,20 +13,7 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "HTML Server"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
 args = "Bot SMS"
-
-[[workflows.workflow]]
-name = "HTML Server"
-author = "agent"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "python -m http.server 5000"
-waitForPort = 5000
 
 [[workflows.workflow]]
 name = "Telegram Bot"
@@ -43,25 +30,8 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "python bot_sms.py"
-
-[[workflows.workflow]]
-name = "Telegram Bot Webhook"
-author = 45433681
-mode = "sequential"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
 args = "python main.py"
-
-[[workflows.workflow]]
-name = "Bot Telegram Polling"
-author = 45433681
-mode = "sequential"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "python main.py"
+waitForPort = 5000
 
 [[ports]]
 localPort = 5000
