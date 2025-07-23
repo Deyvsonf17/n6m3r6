@@ -345,9 +345,34 @@ class DatabaseManager:
                 status TEXT,
                 invoice_id TEXT,
                 data_transacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                data_confirmacao TIMESTAMP,
+                valor_crypto_pago REAL,
+                moeda_paga TEXT,
+                observacoes TEXT,
                 FOREIGN KEY (user_id) REFERENCES usuarios (user_id)
             )
         ''')
+
+        # Migração: Adicionar colunas se não existirem
+        try:
+            cursor.execute('ALTER TABLE transacoes ADD COLUMN data_confirmacao TIMESTAMP')
+        except sqlite3.OperationalError:
+            pass
+
+        try:
+            cursor.execute('ALTER TABLE transacoes ADD COLUMN valor_crypto_pago REAL')
+        except sqlite3.OperationalError:
+            pass
+
+        try:
+            cursor.execute('ALTER TABLE transacoes ADD COLUMN moeda_paga TEXT')
+        except sqlite3.OperationalError:
+            pass
+
+        try:
+            cursor.execute('ALTER TABLE transacoes ADD COLUMN observacoes TEXT')
+        except sqlite3.OperationalError:
+            pass
 
         # Tabela de números SMS
         cursor.execute('''
@@ -1659,6 +1684,20 @@ async def processar_pagamento(update: Update, context: ContextTypes.DEFAULT_TYPE
         logger.error(f"Erro ao usar método assíncrono, tentando síncrono: {e}")
         valor_crypto = crypto_pay.get_crypto_price(valor_total_pagar, moeda)
 
+    # Salvar transação pendente no banco
+    try:
+        with db._lock:
+            conn = db.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO transacoes (user_id, tipo, valor, moeda, status, invoice_id)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (user_id, 'deposito', valor_total_pagar, moeda, 'pendente', invoice["invoice_id"]))
+            conn.commit()
+            conn.close()
+    except Exception as e:
+        logger.error(f"Erro ao salvar transação pendente: {e}")
+
     keyboard = [
         [InlineKeyboardButton("💳 PAGAR AGORA", url=invoice["bot_invoice_url"])],
         [InlineKeyboardButton("🔙 Voltar", callback_data="menu_recarga")]
@@ -1676,8 +1715,9 @@ async def processar_pagamento(update: Update, context: ContextTypes.DEFAULT_TYPE
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
         f"🚨 IMPORTANTE:\n"
         f"• Pague o valor EXATO: {valor_crypto} {moeda}\n"
-        f"• Processamento automático\n"
-        f"• Bônus será creditado após confirmação\n\n"
+        f"• Processamento automático APENAS com valor correto\n"
+        f"• Bônus será creditado após confirmação\n"
+        f"• Valores incorretos NÃO serão processados\n\n"
         f"⏰ Link válido por 1 hora",
         reply_markup=reply_markup
     )
@@ -2930,61 +2970,162 @@ async def status_handler(request):
         return web.json_response({"status": "error", "message": str(e)}, status=500)
 
 async def processar_pagamento_webhook(invoice_id, amount, currency):
-    """Processa pagamento recebido via webhook"""
+    """Processa pagamento recebido via webhook COM VALIDAÇÃO DE VALOR EXATO"""
     try:
         conn = sqlite3.connect(db.db_path)
         cursor = conn.cursor()
         
-        # Buscar transação pendente
+        # Buscar transação pendente com dados da invoice
         cursor.execute("""
-            SELECT user_id, valor_brl FROM transacoes 
+            SELECT user_id, valor, moeda FROM transacoes 
             WHERE invoice_id = ? AND status = 'pendente'
         """, (invoice_id,))
         
         transacao = cursor.fetchone()
         if not transacao:
             logger.warning(f"⚠️ Transação não encontrada para invoice {invoice_id}")
+            conn.close()
             return
         
-        user_id, valor_brl = transacao
+        user_id, valor_esperado_brl, moeda_esperada = transacao
+        
+        # VALIDAÇÃO CRÍTICA: Verificar se o valor pago é EXATAMENTE o esperado
+        # Converter valor esperado em BRL para crypto
+        try:
+            valor_crypto_esperado = await crypto_pay.get_crypto_price_async(valor_esperado_brl, currency)
+            if not valor_crypto_esperado:
+                # Tentar método síncrono como fallback
+                valor_crypto_esperado = crypto_pay.get_crypto_price(valor_esperado_brl, currency)
+        except Exception as e:
+            logger.error(f"Erro ao converter valor esperado: {e}")
+            valor_crypto_esperado = crypto_pay.get_crypto_price(valor_esperado_brl, currency)
+        
+        if not valor_crypto_esperado:
+            logger.error(f"❌ Não foi possível validar valor para invoice {invoice_id}")
+            conn.close()
+            return
+        
+        # Verificar se valores coincidem (com margem de erro de 1% para flutuações de preço)
+        margem_erro = 0.01  # 1% de tolerância
+        valor_minimo = valor_crypto_esperado * (1 - margem_erro)
+        valor_maximo = valor_crypto_esperado * (1 + margem_erro)
+        
+        if not (valor_minimo <= amount <= valor_maximo):
+            logger.warning(f"🚫 VALOR INCORRETO! Esperado: {valor_crypto_esperado:.8f} {currency}, Recebido: {amount:.8f} {currency}")
+            
+            # Marcar como valor incorreto
+            cursor.execute("""
+                UPDATE transacoes 
+                SET status = 'valor_incorreto', 
+                    observacoes = ? 
+                WHERE invoice_id = ?
+            """, (f"Esperado: {valor_crypto_esperado:.8f}, Recebido: {amount:.8f}", invoice_id))
+            conn.commit()
+            conn.close()
+            
+            # Notificar admin sobre pagamento com valor incorreto
+            if ADMIN_ID:
+                try:
+                    from telegram import Bot
+                    bot = Bot(token=BOT_TOKEN)
+                    await bot.send_message(
+                        chat_id=ADMIN_ID,
+                        text=f"🚫 PAGAMENTO COM VALOR INCORRETO!\n\n"
+                             f"👤 Usuário: {user_id}\n"
+                             f"🆔 Invoice: {invoice_id}\n"
+                             f"💰 Esperado: {valor_crypto_esperado:.8f} {currency}\n"
+                             f"💳 Recebido: {amount:.8f} {currency}\n"
+                             f"📊 Diferença: {((amount - valor_crypto_esperado) / valor_crypto_esperado * 100):.2f}%\n\n"
+                             f"⚠️ Pagamento NÃO foi processado automaticamente!"
+                    )
+                except Exception as e:
+                    logger.error(f"Erro ao notificar admin: {e}")
+            return
+        
+        # VALOR CORRETO - Processar pagamento
+        logger.info(f"✅ Valor validado: {amount:.8f} {currency} (esperado: {valor_crypto_esperado:.8f})")
         
         # Calcular bônus
-        bonus = calcular_bonus(valor_brl)
+        bonus = calcular_bonus(valor_esperado_brl)
         
-        # Atualizar saldo do usuário
-        cursor.execute("""
-            UPDATE usuarios 
-            SET saldo = saldo + ?, 
-                saldo_bonus = saldo_bonus + ?,
-                total_depositado = total_depositado + ?
-            WHERE user_id = ?
-        """, (valor_brl, bonus, valor_brl, user_id))
+        # Processar depósito separando saldo base e bônus
+        db.processar_deposito(user_id, valor_esperado_brl, bonus)
         
-        # Marcar transação como paga
+        # Adicionar números grátis baseado no valor
+        if valor_esperado_brl >= 200:
+            numeros_gratis = 20
+        elif valor_esperado_brl >= 100:
+            numeros_gratis = 10
+        elif valor_esperado_brl >= 50:
+            numeros_gratis = 5
+        else:
+            numeros_gratis = 0
+
+        if numeros_gratis > 0:
+            cursor.execute('UPDATE usuarios SET numeros_gratis = numeros_gratis + ? WHERE user_id = ?', (numeros_gratis, user_id))
+        
+        # Verificar se é elegível para recompensa de indicação (R$ 20+)
+        if valor_esperado_brl >= 20.0:
+            cursor.execute("SELECT indicador_id FROM usuarios WHERE user_id = ?", (user_id,))
+            indicador_result = cursor.fetchone()
+            
+            if indicador_result and indicador_result[0]:
+                indicador_id = indicador_result[0]
+                
+                # Dar números grátis para ambos
+                cursor.execute('UPDATE usuarios SET numeros_gratis = numeros_gratis + 2 WHERE user_id = ?', (user_id,))
+                cursor.execute('UPDATE usuarios SET numeros_gratis = numeros_gratis + 2 WHERE user_id = ?', (indicador_id,))
+                cursor.execute('UPDATE usuarios SET indicacoes_validas = indicacoes_validas + 1 WHERE user_id = ?', (indicador_id,))
+                
+                # Notificar indicador
+                try:
+                    from telegram import Bot
+                    bot = Bot(token=BOT_TOKEN)
+                    await bot.send_message(
+                        indicador_id,
+                        f"🎉 RECOMPENSA DE INDICAÇÃO!\n\n"
+                        f"💰 Sua indicação depositou R$ {valor_esperado_brl:.2f}!\n"
+                        f"🎁 Você ganhou 2 números GRÁTIS!\n"
+                        f"👤 Acesse /start para ver seus números!"
+                    )
+                except Exception as e:
+                    logger.error(f"Erro ao notificar indicador: {e}")
+        
+        # Marcar transação como confirmada
         cursor.execute("""
             UPDATE transacoes 
-            SET status = 'pago', data_confirmacao = ?
+            SET status = 'confirmado', 
+                data_confirmacao = ?,
+                valor_crypto_pago = ?,
+                moeda_paga = ?
             WHERE invoice_id = ?
-        """, (datetime.now().isoformat(), invoice_id))
+        """, (datetime.now().isoformat(), amount, currency, invoice_id))
         
         conn.commit()
         conn.close()
         
-        logger.info(f"✅ Pagamento processado automaticamente: User {user_id}, R${valor_brl}, Bônus: R${bonus}")
+        logger.info(f"✅ Pagamento processado automaticamente: User {user_id}, R${valor_esperado_brl}, Bônus: R${bonus}")
         
         # Enviar notificação para o usuário
-        from telegram import Bot
-        bot = Bot(token=BOT_TOKEN)
-        
         try:
+            from telegram import Bot
+            bot = Bot(token=BOT_TOKEN)
+            
+            mensagem_usuario = (
+                f"✅ PAGAMENTO CONFIRMADO AUTOMATICAMENTE!\n\n"
+                f"💰 Valor depositado: R$ {valor_esperado_brl:.2f}\n"
+                f"🎁 Bônus ganho: R$ {bonus:.2f}\n"
+                f"📊 Total creditado: R$ {valor_esperado_brl + bonus:.2f}\n"
+            )
+            
+            if numeros_gratis > 0:
+                mensagem_usuario += f"🎯 Números grátis: {numeros_gratis}\n"
+            
+            mensagem_usuario += f"\n🚀 Seu saldo foi atualizado automaticamente!\n📱 Use /start para comprar números SMS!"
+            
             await bot.send_message(
                 chat_id=user_id,
-                text=f"✅ **PAGAMENTO CONFIRMADO!**\n\n"
-                     f"💰 Valor: R$ {valor_brl:.2f}\n"
-                     f"🎁 Bônus: R$ {bonus:.2f}\n"
-                     f"💳 Total creditado: R$ {valor_brl + bonus:.2f}\n\n"
-                     f"🚀 Seu saldo foi atualizado automaticamente!",
-                parse_mode='Markdown'
+                text=mensagem_usuario
             )
         except Exception as e:
             logger.error(f"Erro ao enviar notificação: {e}")
