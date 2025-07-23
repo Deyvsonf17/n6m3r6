@@ -85,7 +85,7 @@ CRYPTOPAY_API_BASE = "https://pay.crypt.bot/api"
 FIVESIM_API_BASE = "https://5sim.net/v1"
 
 # Configurações do sistema
-VALORES_RECARGA = [10, 25, 50, 100, 200]
+VALORES_RECARGA = [1, 10, 25, 50, 100, 200]
 
 # Criptomoedas disponíveis (apenas as suportadas pelo CryptoPay)
 MOEDAS_CRYPTO = [
