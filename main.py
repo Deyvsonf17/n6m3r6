@@ -3255,30 +3255,29 @@ async def handle_telegram_webhook(request):
 async def setup_webhook():
     """Configura o webhook do Telegram"""
     try:
-        # URL do webhook (substitua pela sua URL do Replit quando fizer deploy)
-        webhook_url = "https://YOUR_REPL_NAME.YOUR_USERNAME.repl.co/telegram"
+        # Remover webhook existente primeiro
+        await application.bot.delete_webhook(drop_pending_updates=True)
+        logger.info("🗑️ Webhook anterior removido")
         
-        # Configurar webhook
-        await application.bot.set_webhook(
-            url=webhook_url,
-            allowed_updates=["message", "callback_query", "inline_query"]
-        )
-        
-        logger.info(f"✅ Webhook configurado: {webhook_url}")
+        # Para desenvolvimento no Replit, vamos usar polling ao invés de webhook
+        logger.info("🔄 Usando polling para desenvolvimento no Replit")
         
     except Exception as e:
         logger.error(f"Erro ao configurar webhook: {e}")
 
-async def start_integrated_server():
-    """Inicia servidor integrado com webhook do Telegram e CryptoPay"""
+async def start_cryptopay_server():
+    """Inicia servidor apenas para webhook do CryptoPay"""
     try:
         app = web.Application()
         
-        # Rota para webhook do Telegram
-        app.router.add_post('/telegram', handle_telegram_webhook)
-        
         # Rota para webhook do CryptoPay
         app.router.add_post('/webhook/cryptopay', handle_webhook)
+        
+        # Rota de status para verificar se o servidor está funcionando
+        async def health_check(request):
+            return web.Response(text="✅ Servidor CryptoPay ativo!")
+        
+        app.router.add_get('/', health_check)
         
         runner = web.AppRunner(app)
         await runner.setup()
@@ -3287,19 +3286,16 @@ async def start_integrated_server():
         site = web.TCPSite(runner, '0.0.0.0', 5000)
         await site.start()
         
-        logger.info("🌐 Servidor integrado iniciado na porta 5000")
-        logger.info("📱 Endpoint Telegram: /telegram")
+        logger.info("🌐 Servidor CryptoPay iniciado na porta 5000")
         logger.info("💰 Endpoint CryptoPay: /webhook/cryptopay")
-        
-        # Configurar webhook do Telegram
-        await setup_webhook()
+        logger.info("🔍 Health check: /")
         
         # Manter servidor rodando
         while True:
             await asyncio.sleep(3600)
             
     except Exception as e:
-        logger.error(f"Erro no servidor integrado: {e}")
+        logger.error(f"Erro no servidor CryptoPay: {e}")
 
 # Instância global da aplicação
 application = None
@@ -3331,17 +3327,29 @@ def main():
         application.add_error_handler(error_handler)
 
         # Inicializar aplicação
-        async def run_webhook():
+        async def run_hybrid():
             # Inicializar aplicação
             await application.initialize()
             await application.start()
             
-            # Iniciar servidor integrado
-            await start_integrated_server()
+            # Configurar webhook (remove webhook anterior)
+            await setup_webhook()
+            
+            # Iniciar servidor para webhook do CryptoPay em paralelo
+            server_task = asyncio.create_task(start_cryptopay_server())
+            
+            # Usar polling para o bot do Telegram
+            logger.info("🚀 Bot Premium iniciado com Polling + Servidor CryptoPay!")
+            await application.updater.start_polling(
+                allowed_updates=["message", "callback_query"],
+                drop_pending_updates=True
+            )
+            
+            # Manter ambos rodando
+            await asyncio.gather(server_task)
 
-        # Rodar com webhook
-        logger.info("🚀 Bot Premium iniciado com Webhooks!")
-        asyncio.run(run_webhook())
+        # Rodar modo híbrido
+        asyncio.run(run_hybrid())
 
     except Exception as e:
         logger.error(f"Erro crítico ao iniciar bot: {e}")
