@@ -3231,29 +3231,83 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
         except Exception as e:
             logger.error(f"Erro ao responder erro para usuário: {e}")
 
-async def start_webhook_server():
-    """Inicia servidor para receber webhooks do CryptoPay"""
+
+
+async def handle_telegram_webhook(request):
+    """Handler para webhooks do Telegram"""
+    try:
+        # Ler dados do webhook
+        body = await request.read()
+        data = json.loads(body.decode())
+        
+        # Criar update do Telegram
+        update = Update.de_json(data, application.bot)
+        
+        # Processar update
+        await application.process_update(update)
+        
+        return web.Response(text="OK")
+    
+    except Exception as e:
+        logger.error(f"Erro ao processar webhook do Telegram: {e}")
+        return web.Response(status=500, text="Error")
+
+async def setup_webhook():
+    """Configura o webhook do Telegram"""
+    try:
+        # URL do webhook (substitua pela sua URL do Replit quando fizer deploy)
+        webhook_url = "https://YOUR_REPL_NAME.YOUR_USERNAME.repl.co/telegram"
+        
+        # Configurar webhook
+        await application.bot.set_webhook(
+            url=webhook_url,
+            allowed_updates=["message", "callback_query", "inline_query"]
+        )
+        
+        logger.info(f"✅ Webhook configurado: {webhook_url}")
+        
+    except Exception as e:
+        logger.error(f"Erro ao configurar webhook: {e}")
+
+async def start_integrated_server():
+    """Inicia servidor integrado com webhook do Telegram e CryptoPay"""
     try:
         app = web.Application()
+        
+        # Rota para webhook do Telegram
+        app.router.add_post('/telegram', handle_telegram_webhook)
+        
+        # Rota para webhook do CryptoPay
         app.router.add_post('/webhook/cryptopay', handle_webhook)
         
         runner = web.AppRunner(app)
         await runner.setup()
         
+        # Usar porta 5000 conforme recomendação do Replit
         site = web.TCPSite(runner, '0.0.0.0', 5000)
         await site.start()
         
-        logger.info("🌐 Servidor webhook iniciado na porta 5000")
+        logger.info("🌐 Servidor integrado iniciado na porta 5000")
+        logger.info("📱 Endpoint Telegram: /telegram")
+        logger.info("💰 Endpoint CryptoPay: /webhook/cryptopay")
+        
+        # Configurar webhook do Telegram
+        await setup_webhook()
         
         # Manter servidor rodando
         while True:
-            await asyncio.sleep(3600)  # Sleep por 1 hora
+            await asyncio.sleep(3600)
             
     except Exception as e:
-        logger.error(f"Erro no servidor webhook: {e}")
+        logger.error(f"Erro no servidor integrado: {e}")
+
+# Instância global da aplicação
+application = None
 
 def main():
     """Função principal"""
+    global application
+    
     if not BOT_TOKEN:
         logger.error("BOT_TOKEN não configurado nos secrets!")
         return
@@ -3276,22 +3330,18 @@ def main():
         # Adicionar handler de erros
         application.add_error_handler(error_handler)
 
-        # Iniciar servidor webhook em background
-        async def run_both():
-            # Iniciar webhook server
-            webhook_task = asyncio.create_task(start_webhook_server())
+        # Inicializar aplicação
+        async def run_webhook():
+            # Inicializar aplicação
+            await application.initialize()
+            await application.start()
+            
+            # Iniciar servidor integrado
+            await start_integrated_server()
 
-            # Iniciar bot
-            logger.info("🚀 Bot Premium iniciado! Sistema VIP + Webhooks ativos.")
-            await application.run_polling(allowed_updates=Update.ALL_TYPES, stop_signals=None)
-
-        # ✅ Correção para rodar no Replit
-        import nest_asyncio
-        nest_asyncio.apply()
-
-        loop = asyncio.get_event_loop()
-        loop.create_task(run_both())
-        loop.run_forever()
+        # Rodar com webhook
+        logger.info("🚀 Bot Premium iniciado com Webhooks!")
+        asyncio.run(run_webhook())
 
     except Exception as e:
         logger.error(f"Erro crítico ao iniciar bot: {e}")
